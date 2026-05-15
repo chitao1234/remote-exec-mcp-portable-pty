@@ -202,6 +202,7 @@ fn get_base_env() -> BTreeMap<OsString, EnvEntry> {
 #[cfg_attr(feature = "serde_support", derive(Serialize, Deserialize))]
 pub struct CommandBuilder {
     args: Vec<OsString>,
+    arg0: Option<OsString>,
     envs: BTreeMap<OsString, EnvEntry>,
     cwd: Option<OsString>,
     #[cfg(unix)]
@@ -215,6 +216,7 @@ impl CommandBuilder {
     pub fn new<S: AsRef<OsStr>>(program: S) -> Self {
         Self {
             args: vec![program.as_ref().to_owned()],
+            arg0: None,
             envs: get_base_env(),
             cwd: None,
             #[cfg(unix)]
@@ -227,6 +229,7 @@ impl CommandBuilder {
     pub fn from_argv(args: Vec<OsString>) -> Self {
         Self {
             args,
+            arg0: None,
             envs: get_base_env(),
             cwd: None,
             #[cfg(unix)]
@@ -254,6 +257,7 @@ impl CommandBuilder {
     pub fn new_default_prog() -> Self {
         Self {
             args: vec![],
+            arg0: None,
             envs: get_base_env(),
             cwd: None,
             #[cfg(unix)]
@@ -309,6 +313,11 @@ impl CommandBuilder {
 
     pub fn get_argv_mut(&mut self) -> &mut Vec<OsString> {
         &mut self.args
+    }
+
+    /// Override argv[0] without changing the executable that will be launched.
+    pub fn arg0<S: AsRef<OsStr>>(&mut self, arg0: S) {
+        self.arg0 = Some(arg0.as_ref().to_owned());
     }
 
     /// Override the value of an environmental variable
@@ -528,13 +537,19 @@ impl CommandBuilder {
 
             // Run the shell as a login shell by prefixing the shell's
             // basename with `-` and setting that as argv0
-            let basename = shell.rsplit('/').next().unwrap_or(&shell);
-            cmd.arg0(&format!("-{}", basename));
+            let argv0 = self.arg0.as_deref().map_or_else(
+                || {
+                    let basename = shell.rsplit('/').next().unwrap_or(&shell);
+                    OsString::from(format!("-{}", basename))
+                },
+                OsString::from,
+            );
+            cmd.arg0(argv0);
             cmd
         } else {
             let resolved = self.search_path(&self.args[0], dir)?;
             let mut cmd = std::process::Command::new(&resolved);
-            cmd.arg0(&self.args[0]);
+            cmd.arg0(self.arg0.as_deref().unwrap_or(&self.args[0]));
             cmd.args(&self.args[1..]);
             cmd
         };
